@@ -692,7 +692,6 @@ pub mod pallet {
                 <NominatorState<T>>::get(&nominator).ok_or(<Error<T>>::NominatorDNE)?;
             let remaining = nominations
                 .dec_nomination(validator.clone(), less)
-                .map(|bal| bal)
                 .map_err(|err_str| {
                     if err_str == "Underflow" {
                         <Error<T>>::Underflow

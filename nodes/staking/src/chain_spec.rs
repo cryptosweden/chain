@@ -167,7 +167,6 @@ pub fn testnet_genesis(
                         acc = acc
                             .iter()
                             .cloned()
-                            .map(|(cur_account, cur_endowment)| (cur_account, cur_endowment))
                             .collect::<Vec<(AccountId, Balance)>>();
                     } else {
                         acc.push((account, endowment));
