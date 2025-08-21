@@ -1,49 +1,40 @@
 name: Rust AutoDoc
 
+env:
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+  RUSTFLAGS: "-A warnings"
+
+
 on:
   push:
     branches: master
+  pull_request: 
+    branches: master
 
 jobs:
-
   autodoc:
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v2
-  
-    - name: Cache cargo registry  
-      uses: actions/cache@v2.1.7  
-      with: 
-        path: ~/.cargo/registry 
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-registry-
-
-    - name: Cache cargo index 
-      uses: actions/cache@v2.1.7  
-      with: 
-        path: ~/.cargo/git  
-        key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-index-
-
-    - name: Cache cargo build
-      uses: actions/cache@v2.1.7
-      with:
-        path: target
-        key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-build-target-
-
-    - name: Setup toolchain
-      run: ./scripts/init.sh
-
-    - name: Build the docs
-      run: cargo doc --all
-    
-    - name: Deploy the docs
-      uses: peaceiris/actions-gh-pages@v3
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./target/doc
+      - uses: actions/checkout@v4
+      - name: Install Rust stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: rust-src
+          target: wasm32-unknown-unknown
+      - name: Install protobuf-compiler
+        run: |
+          sudo apt-get install protobuf-compiler
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.5
+      - name: Build the docs
+        run: |
+           cargo doc --all --no-deps
+           cp -f .maintain/index.html target/doc
+      - name: Deploy the docs
+        if: github.event_name != 'pull_request'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./target/doc

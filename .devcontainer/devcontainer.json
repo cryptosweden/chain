@@ -1,10 +1,46 @@
 {
     "build": {
         "dockerfile": "Dockerfile",
-        "context": ".."
+        "context": "..",
+        "cacheFrom": "ghcr.io/nodlecode/devcontainer-chain"
     },
     "features": {
         "github-cli": "latest",
         "docker-from-docker": "latest"
+    },
+    "containerUser": "vscode",
+    "updateContentCommand": "cargo build --all --exclude nodle-parachain",
+    "hostRequirements": {
+        "cpus": 4,
+        "memory": "8gb",
+        "storage": "50gb"
+    },
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "lldb.executable": "/usr/bin/lldb",
+                "files.watcherExclude": {
+                    "**/target/**": true
+                },
+                "rust-analyzer.checkOnSave.command": "clippy",
+                "rust-analyzer.checkOnSave.features": "all",
+                "rust-analyzer.checkOnSave.extraArgs": [
+                    "--",
+                    "-A",
+                    "clippy::type_complexity",
+                    "-A",
+                    "clippy::identity_op",
+                    "-A",
+                    "clippy::boxed_local",
+                    "-D",
+                    "dead_code"
+                ]
+            },
+            "extensions": [
+                "vadimcn.vscode-lldb",
+                "serayuzgur.crates",
+                "rust-lang.rust-analyzer"
+            ]
+        }
     }
 }

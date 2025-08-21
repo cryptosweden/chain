@@ -1,6 +1,6 @@
 /*
  * This file is part of the Nodle Chain distributed at https://github.com/NodleCode/chain
- * Copyright (C) 2022  Nodle International
+ * Copyright (C) 2020-2022  Nodle International
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,51 +16,84 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#![cfg(feature = "runtime-benchmarks")]
-#![allow(unused)]
-
-//! Amendments pallet benchmarks
-
 use super::*;
-
+use crate::BalanceOf;
 use crate::Pallet as Allocations;
-use frame_benchmarking::impl_benchmark_test_suite;
 use frame_benchmarking::{account, benchmarks};
+use frame_support::{traits::ConstU32, BoundedVec};
 use frame_system::RawOrigin;
 use sp_std::prelude::*;
 
-const MAX_BYTES: u32 = 1_024;
-const SEED: u32 = 0;
+pub type MaxMembers = ConstU32<10>;
 
-pub struct BenchmarkConfig<T: Config> {
-    grantee: T::AccountId,
-    oracle: T::AccountId,
+const SEED: u32 = 0;
+const ALLOC_FACTOR: u32 = 10;
+
+fn make_batch<T: Config>(b: u32) -> BoundedVec<(T::AccountId, BalanceOf<T>), T::MaxAllocs> {
+	let mut ret = BoundedVec::with_bounded_capacity(b as usize);
+
+	for i in 0..b {
+		let account = account("grantee", i, SEED);
+		let _ = ret.try_push((account, T::ExistentialDeposit::get() * ALLOC_FACTOR.into()));
+	}
+	ret
 }
 
-fn make_benchmark_config<T: Config>(u: u32) -> BenchmarkConfig<T> {
-    let grantee = account("grantee", u, SEED);
-    let oracle = account("oracle", u, SEED);
-
-    let deposit_applying = T::ExistentialDeposit::get();
-
-    T::Currency::make_free_balance_be(&grantee, deposit_applying);
-    T::Currency::make_free_balance_be(&oracle, deposit_applying);
-
-    BenchmarkConfig { grantee, oracle }
+fn assert_last_event<T: Config>(generic_event: <T as Config>::RuntimeEvent) {
+	let events = frame_system::Pallet::<T>::events();
+	assert!(!events.is_empty());
+	let system_event: <T as frame_system::Config>::RuntimeEvent = generic_event.into();
+	let frame_system::EventRecord { event, .. } = &events[events.len() - 1];
+	assert_eq!(event, &system_event);
 }
 
 benchmarks! {
-    allocate {
-        let b in 1 .. MAX_BYTES;
+	allocate {
+		let b in 1..T::MaxAllocs::get();
 
-        let config = make_benchmark_config::<T>(0);
+		let batch_arg = make_batch::<T>(b);
+		let oracle: T::AccountId = account("oracle", 0, SEED);
+		let mut members = <BenchmarkOracles<T>>::get();
+		assert!(members.try_push(oracle).is_ok());
+		<BenchmarkOracles<T>>::put(&members);
+		<SessionQuota<T>>::put(T::ExistentialDeposit::get() * (b * ALLOC_FACTOR).into());
+	}:{
+		let _ = Allocations::<T>::allocate(batch_arg);
+	}
 
-        Pallet::<T>::initialize_members(&[config.oracle.clone()]);
-    }: _(RawOrigin::Signed(config.oracle.clone()), config.grantee.clone(), 100u32.into(), vec![1; b as usize])
+	calc_quota {
+	}: {
+		Allocations::<T>::checked_calc_session_quota(Zero::zero());
+	}
+	verify {
+		assert_last_event::<T>(Event::SessionQuotaCalculated(<NextSessionQuota<T>>::get()).into())
+	}
 
-    impl_benchmark_test_suite!(
-        Allocations,
-        crate::tests::new_test_ext(),
-        crate::tests::Test,
-    );
+	renew_quota {
+	}: {
+		Allocations::<T>::checked_renew_session_quota(Zero::zero());
+	}
+	verify {
+		assert_last_event::<T>(Event::SessionQuotaRenewed.into())
+	}
+
+	checked_update_session_quota {
+	}:{
+		Allocations::<T>::checked_update_session_quota();
+	}
+	verify {
+		assert_eq!(frame_system::Pallet::<T>::events().len(), 2);
+	}
+
+	set_curve_starting_block {
+	}: _(RawOrigin::Root, One::one())
+	verify {
+		assert_eq!(<MintCurveStartingBlock<T>>::get(), Some(One::one()));
+	}
+
+	impl_benchmark_test_suite!(
+		Allocations,
+		crate::tests::new_test_ext(),
+		crate::tests::Test,
+	);
 }

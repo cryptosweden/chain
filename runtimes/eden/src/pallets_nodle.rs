@@ -1,6 +1,6 @@
 /*
  * This file is part of the Nodle Chain distributed at https://github.com/NodleCode/chain
- * Copyright (C) 2022  Nodle International
+ * Copyright (C) 2020-2022  Nodle International
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,49 +16,109 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 use crate::{
-    pallets_governance::MoreThanHalfOfTechComm, Allocations, Balances, CompanyReserve, Event,
-    Runtime,
+	constants, pallets_governance::MoreThanHalfOfTechComm, AllocationsOracles, Balances, DaoReserve, Runtime,
+	RuntimeEvent,
 };
+use cumulus_pallet_parachain_system::RelaychainDataProvider;
 use frame_support::{parameter_types, PalletId};
-use primitives::Balance;
+use lazy_static::lazy_static;
+use pallet_allocations::MintCurve;
 use sp_runtime::Perbill;
 
-impl pallet_emergency_shutdown::Config for Runtime {
-    type Event = Event;
-    type ShutdownOrigin = MoreThanHalfOfTechComm;
-    type WeightInfo = pallet_emergency_shutdown::weights::SubstrateWeight<Runtime>;
+lazy_static! {
+	static ref EDEN_MINT_CURVE: MintCurve<Runtime> = MintCurve::new(
+		constants::DAYS_RELAY_CHAIN,
+		91 * constants::DAYS_RELAY_CHAIN + 6 * constants::HOURS_RELAY_CHAIN,
+		&[
+			Perbill::from_perthousand(1),
+			Perbill::from_perthousand(2),
+			Perbill::from_perthousand(3),
+			Perbill::from_perthousand(4),
+			Perbill::from_perthousand(6),
+			Perbill::from_perthousand(9),
+			Perbill::from_perthousand(11),
+			Perbill::from_perthousand(14),
+			Perbill::from_perthousand(17),
+			Perbill::from_perthousand(20),
+			Perbill::from_perthousand(24),
+			Perbill::from_perthousand(26),
+			Perbill::from_perthousand(32),
+			Perbill::from_perthousand(34),
+			Perbill::from_perthousand(36),
+			Perbill::from_perthousand(37),
+			Perbill::from_perthousand(38),
+			Perbill::from_perthousand(39),
+			Perbill::from_perthousand(39),
+			Perbill::from_perthousand(39),
+			Perbill::from_perthousand(38),
+			Perbill::from_perthousand(38),
+			Perbill::from_perthousand(37),
+			Perbill::from_perthousand(35),
+			Perbill::from_perthousand(34),
+			Perbill::from_perthousand(32),
+			Perbill::from_perthousand(30),
+			Perbill::from_perthousand(28),
+			Perbill::from_perthousand(26),
+			Perbill::from_perthousand(24),
+			Perbill::from_perthousand(22),
+			Perbill::from_perthousand(20),
+			Perbill::from_perthousand(18),
+			Perbill::from_perthousand(16),
+			Perbill::from_perthousand(14),
+			Perbill::from_perthousand(12),
+			Perbill::from_perthousand(11),
+			Perbill::from_perthousand(9),
+			Perbill::from_perthousand(7),
+			Perbill::from_perthousand(6),
+			Perbill::from_perthousand(5),
+			Perbill::from_perthousand(4),
+			Perbill::from_perthousand(3),
+			Perbill::from_perthousand(2),
+			Perbill::from_perthousand(1),
+		],
+		21_000_000_000 * constants::NODL
+	);
 }
 
 parameter_types! {
-    pub const ProtocolFee: Perbill = Perbill::from_percent(20);
-    pub const MaximumCoinsEverAllocated: Balance = 1_259_995_654_473_120_000_000;
-    pub const AllocPalletId: PalletId = PalletId(*b"py/alloc");
+	pub const ProtocolFee: Perbill = Perbill::from_percent(20);
+	pub const AllocPalletId: PalletId = PalletId(*b"py/alloc");
+	pub const MaxAllocs: u32 = 500;
+	pub EdenMintCurve: &'static MintCurve<Runtime> = &EDEN_MINT_CURVE;
 }
 
 impl pallet_allocations::Config for Runtime {
-    type Event = Event;
-    type Currency = Balances;
-    type PalletId = AllocPalletId;
-    type ProtocolFee = ProtocolFee;
-    type ProtocolFeeReceiver = CompanyReserve;
-    type MaximumCoinsEverAllocated = MaximumCoinsEverAllocated;
-    type ExistentialDeposit = <Runtime as pallet_balances::Config>::ExistentialDeposit;
-    type WeightInfo = pallet_allocations::weights::SubstrateWeight<Runtime>;
+	type RuntimeEvent = RuntimeEvent;
+	type Currency = Balances;
+	type PalletId = AllocPalletId;
+	type ProtocolFee = ProtocolFee;
+	type ProtocolFeeReceiver = DaoReserve;
+	type MintCurve = EdenMintCurve;
+	type ExistentialDeposit = <Runtime as pallet_balances::Config>::ExistentialDeposit;
+	type MaxAllocs = MaxAllocs;
+	type OracleMembers = AllocationsOracles;
+	type BlockNumberProvider = RelaychainDataProvider<Runtime>;
+	type WeightInfo = crate::weights::pallet_allocations::WeightInfo<Runtime>;
 }
 
 parameter_types! {
-    pub const MaxMembers: u32 = 50;
+	pub const MaxMembers: u32 = 50;
 }
 
 impl pallet_membership::Config<pallet_membership::Instance2> for Runtime {
-    type Event = Event;
-    type AddOrigin = MoreThanHalfOfTechComm;
-    type RemoveOrigin = MoreThanHalfOfTechComm;
-    type SwapOrigin = MoreThanHalfOfTechComm;
-    type ResetOrigin = MoreThanHalfOfTechComm;
-    type PrimeOrigin = MoreThanHalfOfTechComm;
-    type MembershipInitialized = Allocations;
-    type MembershipChanged = Allocations;
-    type MaxMembers = MaxMembers;
-    type WeightInfo = pallet_membership::weights::SubstrateWeight<Runtime>;
+	type RuntimeEvent = RuntimeEvent;
+	type AddOrigin = MoreThanHalfOfTechComm;
+	type RemoveOrigin = MoreThanHalfOfTechComm;
+	type SwapOrigin = MoreThanHalfOfTechComm;
+	type ResetOrigin = MoreThanHalfOfTechComm;
+	type PrimeOrigin = MoreThanHalfOfTechComm;
+	type MembershipInitialized = ();
+	// Note: There's an assumption in this pallet's benchmarking logic upstream that the type MembershipChanged should be non default.
+	// This is their bug and here we just take a workaround for our own benchmarking. Do not use TechnicalCommittee for non benchmarking.
+	#[cfg(feature = "runtime-benchmarks")]
+	type MembershipChanged = crate::TechnicalCommittee;
+	#[cfg(not(feature = "runtime-benchmarks"))]
+	type MembershipChanged = ();
+	type MaxMembers = MaxMembers;
+	type WeightInfo = crate::weights::pallet_membership_allocations_oracles::WeightInfo<Runtime>;
 }

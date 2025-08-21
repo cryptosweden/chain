@@ -1,509 +1,989 @@
-//! Unit tests for the vesting module.
+/*
+ * This file is part of the Nodle Chain distributed at https://github.com/NodleCode/chain
+ * Copyright (C) 2020-2022  Nodle International
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
-#![cfg(test)]
+//! Unit tests for the vesting module.
 
 use super::*;
 use frame_support::{assert_err, assert_noop, assert_ok, traits::WithdrawReasons};
+use hex_literal::hex;
 use mock::{
-    CancelOrigin, Event as TestEvent, ExtBuilder, ForceOrigin, Origin, PalletBalances, System,
-    Test as Runtime, Vesting, ALICE, BOB,
+	context_events, CancelOrigin, ExtBuilder, PalletBalances, RuntimeEvent as TestEvent, RuntimeOrigin, System,
+	Test as Runtime, Vesting, ALICE, BOB,
 };
 use pallet_balances::{BalanceLock, Reasons};
 use sp_runtime::DispatchError::BadOrigin;
 
 #[test]
+fn check_releases_default_config() {
+	ExtBuilder::default().build().execute_with(|| {
+		let releases = Releases::default();
+		assert_eq!(releases, Releases::V0);
+		assert_ne!(releases, Releases::V1);
+	})
+}
+#[test]
 fn add_vesting_schedule_works() {
-    ExtBuilder::default()
-        .one_hundred_for_alice()
-        .build()
-        .execute_with(|| {
-            System::set_block_number(1);
+	ExtBuilder::default().one_hundred_for_alice().build().execute_with(|| {
+		System::set_block_number(1);
 
-            let schedule = VestingSchedule {
-                start: 0u64,
-                period: 10u64,
-                period_count: 1u32,
-                per_period: 100u64,
-            };
-            assert_ok!(Vesting::add_vesting_schedule(
-                Origin::signed(ALICE),
-                BOB,
-                schedule.clone()
-            ));
-            assert_eq!(Vesting::vesting_schedules(&BOB), vec![schedule.clone()]);
+		let schedule = VestingSchedule {
+			start: 0u64,
+			period: 10u64,
+			period_count: 1u32,
+			per_period: 100u64,
+		};
+		assert_ok!(Vesting::add_vesting_schedule(
+			RuntimeOrigin::signed(ALICE::get()),
+			BOB::get(),
+			schedule.clone()
+		));
+		assert_eq!(Vesting::vesting_schedules(BOB::get()), vec![schedule.clone()]);
 
-            let vested_event =
-                TestEvent::Vesting(Event::VestingScheduleAdded(ALICE, BOB, schedule));
-            assert!(System::events()
-                .iter()
-                .any(|record| record.event == vested_event));
-        });
+		let vested_event = TestEvent::Vesting(Event::VestingScheduleAdded(ALICE::get(), BOB::get(), schedule));
+		assert!(System::events().iter().any(|record| record.event == vested_event));
+	});
 }
 
 #[test]
 fn add_new_vesting_schedule_merges_with_current_locked_balance_and_until() {
-    ExtBuilder::default()
-        .one_hundred_for_alice()
-        .build()
-        .execute_with(|| {
-            let schedule = VestingSchedule {
-                start: 0u64,
-                period: 10u64,
-                period_count: 2u32,
-                per_period: 10u64,
-            };
-            assert_ok!(Vesting::add_vesting_schedule(
-                Origin::signed(ALICE),
-                BOB,
-                schedule
-            ));
+	ExtBuilder::default().one_hundred_for_alice().build().execute_with(|| {
+		let schedule = VestingSchedule {
+			start: 0u64,
+			period: 10u64,
+			period_count: 2u32,
+			per_period: 10u64,
+		};
+		assert_ok!(Vesting::add_vesting_schedule(
+			RuntimeOrigin::signed(ALICE::get()),
+			BOB::get(),
+			schedule
+		));
 
-            System::set_block_number(12);
+		System::set_block_number(12);
 
-            let another_schedule = VestingSchedule {
-                start: 10u64,
-                period: 13u64,
-                period_count: 1u32,
-                per_period: 7u64,
-            };
-            assert_ok!(Vesting::add_vesting_schedule(
-                Origin::signed(ALICE),
-                BOB,
-                another_schedule
-            ));
+		let another_schedule = VestingSchedule {
+			start: 10u64,
+			period: 13u64,
+			period_count: 1u32,
+			per_period: 7u64,
+		};
+		assert_ok!(Vesting::add_vesting_schedule(
+			RuntimeOrigin::signed(ALICE::get()),
+			BOB::get(),
+			another_schedule
+		));
 
-            assert_eq!(
-                PalletBalances::locks(&BOB).to_vec().pop(),
-                Some(BalanceLock {
-                    id: VESTING_LOCK_ID,
-                    amount: 17u64,
-                    reasons: Reasons::All,
-                })
-            );
-        });
+		assert_eq!(
+			PalletBalances::locks(BOB::get()).to_vec().pop(),
+			Some(BalanceLock {
+				id: VESTING_LOCK_ID,
+				amount: 17u64,
+				reasons: Reasons::All,
+			})
+		);
+	});
 }
 
 #[test]
 fn cannot_use_fund_if_not_claimed() {
-    ExtBuilder::default()
-        .one_hundred_for_alice()
-        .build()
-        .execute_with(|| {
-            let schedule = VestingSchedule {
-                start: 10u64,
-                period: 10u64,
-                period_count: 1u32,
-                per_period: 50u64,
-            };
-            assert_ok!(Vesting::add_vesting_schedule(
-                Origin::signed(ALICE),
-                BOB,
-                schedule.clone()
-            ));
-            assert!(
-                PalletBalances::ensure_can_withdraw(&BOB, 1, WithdrawReasons::TRANSFER, 49)
-                    .is_err()
-            );
-        });
+	ExtBuilder::default().one_hundred_for_alice().build().execute_with(|| {
+		let schedule = VestingSchedule {
+			start: 10u64,
+			period: 10u64,
+			period_count: 1u32,
+			per_period: 50u64,
+		};
+		assert_ok!(Vesting::add_vesting_schedule(
+			RuntimeOrigin::signed(ALICE::get()),
+			BOB::get(),
+			schedule
+		));
+		assert!(PalletBalances::ensure_can_withdraw(&BOB::get(), 1, WithdrawReasons::TRANSFER, 49).is_err());
+	});
 }
 
 #[test]
 fn add_vesting_schedule_fails_if_zero_period_or_count() {
-    ExtBuilder::default()
-        .one_hundred_for_alice()
-        .build()
-        .execute_with(|| {
-            let schedule = VestingSchedule {
-                start: 1u64,
-                period: 0u64,
-                period_count: 1u32,
-                per_period: 100u64,
-            };
-            assert_err!(
-                Vesting::add_vesting_schedule(Origin::signed(ALICE), BOB, schedule.clone()),
-                Error::<Runtime>::ZeroVestingPeriod
-            );
+	ExtBuilder::default().one_hundred_for_alice().build().execute_with(|| {
+		let schedule = VestingSchedule {
+			start: 1u64,
+			period: 0u64,
+			period_count: 1u32,
+			per_period: 100u64,
+		};
+		assert_err!(
+			Vesting::add_vesting_schedule(RuntimeOrigin::signed(ALICE::get()), BOB::get(), schedule),
+			Error::<Runtime>::ZeroVestingPeriod
+		);
 
-            let schedule = VestingSchedule {
-                start: 1u64,
-                period: 1u64,
-                period_count: 0u32,
-                per_period: 100u64,
-            };
-            assert_err!(
-                Vesting::add_vesting_schedule(Origin::signed(ALICE), BOB, schedule.clone()),
-                Error::<Runtime>::ZeroVestingPeriodCount
-            );
-        });
+		let schedule = VestingSchedule {
+			start: 1u64,
+			period: 1u64,
+			period_count: 0u32,
+			per_period: 100u64,
+		};
+		assert_err!(
+			Vesting::add_vesting_schedule(RuntimeOrigin::signed(ALICE::get()), BOB::get(), schedule),
+			Error::<Runtime>::ZeroVestingPeriodCount
+		);
+	});
 }
 
 #[test]
 fn add_vesting_schedule_fails_if_transfer_err() {
-    ExtBuilder::default()
-        .one_hundred_for_alice()
-        .build()
-        .execute_with(|| {
-            let schedule = VestingSchedule {
-                start: 1u64,
-                period: 1u64,
-                period_count: 1u32,
-                per_period: 100u64,
-            };
-            assert_err!(
-                Vesting::add_vesting_schedule(Origin::signed(BOB), ALICE, schedule.clone()),
-                pallet_balances::Error::<Runtime, _>::InsufficientBalance,
-            );
-        });
+	use sp_runtime::TokenError::FundsUnavailable;
+	ExtBuilder::default().one_hundred_for_alice().build().execute_with(|| {
+		let schedule = VestingSchedule {
+			start: 1u64,
+			period: 1u64,
+			period_count: 1u32,
+			per_period: 100u64,
+		};
+		assert_err!(
+			Vesting::add_vesting_schedule(RuntimeOrigin::signed(BOB::get()), ALICE::get(), schedule),
+			FundsUnavailable,
+		);
+	});
 }
 
 #[test]
 fn add_vesting_schedule_fails_if_overflow() {
-    ExtBuilder::default()
-        .one_hundred_for_alice()
-        .build()
-        .execute_with(|| {
-            let schedule = VestingSchedule {
-                start: 1u64,
-                period: 1u64,
-                period_count: 2u32,
-                per_period: u64::max_value(),
-            };
-            assert_err!(
-                Vesting::add_vesting_schedule(Origin::signed(ALICE), BOB, schedule),
-                Error::<Runtime>::NumOverflow
-            );
+	ExtBuilder::default().one_hundred_for_alice().build().execute_with(|| {
+		let schedule = VestingSchedule {
+			start: 1u64,
+			period: 1u64,
+			period_count: 2u32,
+			per_period: u64::MAX,
+		};
+		assert_err!(
+			Vesting::add_vesting_schedule(RuntimeOrigin::signed(ALICE::get()), BOB::get(), schedule),
+			Error::<Runtime>::NumOverflow
+		);
 
-            let another_schedule = VestingSchedule {
-                start: u64::max_value(),
-                period: 1u64,
-                period_count: 2u32,
-                per_period: 1u64,
-            };
-            assert_err!(
-                Vesting::add_vesting_schedule(Origin::signed(ALICE), BOB, another_schedule),
-                Error::<Runtime>::NumOverflow
-            );
-        });
+		let another_schedule = VestingSchedule {
+			start: u64::MAX,
+			period: 1u64,
+			period_count: 2u32,
+			per_period: 1u64,
+		};
+		assert_err!(
+			Vesting::add_vesting_schedule(RuntimeOrigin::signed(ALICE::get()), BOB::get(), another_schedule),
+			Error::<Runtime>::NumOverflow
+		);
+	});
 }
 
 #[test]
 fn claim_works() {
-    ExtBuilder::default()
-        .one_hundred_for_alice()
-        .build()
-        .execute_with(|| {
-            let schedule = VestingSchedule {
-                start: 0u64,
-                period: 10u64,
-                period_count: 2u32,
-                per_period: 10u64,
-            };
-            assert_ok!(Vesting::add_vesting_schedule(
-                Origin::signed(ALICE),
-                BOB,
-                schedule.clone()
-            ));
+	ExtBuilder::default().one_hundred_for_alice().build().execute_with(|| {
+		let schedule = VestingSchedule {
+			start: 0u64,
+			period: 10u64,
+			period_count: 2u32,
+			per_period: 10u64,
+		};
+		assert_ok!(Vesting::add_vesting_schedule(
+			RuntimeOrigin::signed(ALICE::get()),
+			BOB::get(),
+			schedule
+		));
 
-            System::set_block_number(11);
-            // remain locked if not claimed
-            assert!(PalletBalances::transfer(Origin::signed(BOB), ALICE, 10).is_err());
-            // unlocked after claiming
-            assert_ok!(Vesting::claim(Origin::signed(BOB)));
-            assert_ok!(PalletBalances::transfer(Origin::signed(BOB), ALICE, 10));
-            // more are still locked
-            assert!(PalletBalances::transfer(Origin::signed(BOB), ALICE, 1).is_err());
-            // does not clear storage
-            assert!(VestingSchedules::<Runtime>::contains_key(BOB));
+		System::set_block_number(11);
+		// remain locked if not claimed
+		assert!(PalletBalances::transfer_keep_alive(RuntimeOrigin::signed(BOB::get()), ALICE::get(), 10).is_err());
+		// unlocked after claiming
+		assert_ok!(Vesting::claim(RuntimeOrigin::signed(BOB::get())));
+		assert_ok!(PalletBalances::transfer_keep_alive(
+			RuntimeOrigin::signed(BOB::get()),
+			ALICE::get(),
+			10
+		));
+		// more are still locked
+		assert!(PalletBalances::transfer_allow_death(RuntimeOrigin::signed(BOB::get()), ALICE::get(), 1).is_err());
+		// does not clear storage
+		assert!(<VestingSchedules<Runtime>>::contains_key(BOB::get()));
 
-            System::set_block_number(21);
-            // claim more
-            assert_ok!(Vesting::claim(Origin::signed(BOB)));
-            assert_ok!(PalletBalances::transfer(Origin::signed(BOB), ALICE, 10));
-            // all used up
-            assert_eq!(PalletBalances::free_balance(BOB), 0);
-            // clears the storage
-            assert!(!VestingSchedules::<Runtime>::contains_key(BOB));
-            // no locks anymore
-            assert_eq!(PalletBalances::locks(&BOB), vec![]);
-        });
+		System::set_block_number(21);
+		// claim more
+		assert_ok!(Vesting::claim(RuntimeOrigin::signed(BOB::get())));
+		assert_ok!(PalletBalances::transfer_allow_death(
+			RuntimeOrigin::signed(BOB::get()),
+			ALICE::get(),
+			10
+		));
+		// all used up
+		assert_eq!(PalletBalances::free_balance(BOB::get()), 0);
+		// clears the storage
+		assert!(!<VestingSchedules<Runtime>>::contains_key(BOB::get()));
+		// no locks anymore
+		assert_eq!(PalletBalances::locks(BOB::get()), vec![]);
+	});
 }
 
 #[test]
 fn cancel_restricted_origin() {
-    ExtBuilder::default().build().execute_with(|| {
-        assert_noop!(
-            Vesting::cancel_all_vesting_schedules(
-                Origin::signed(ALICE),
-                BOB,
-                CancelOrigin::get(),
-                false
-            ),
-            BadOrigin
-        );
-    })
+	ExtBuilder::default().build().execute_with(|| {
+		assert_noop!(
+			Vesting::cancel_all_vesting_schedules(RuntimeOrigin::signed(ALICE::get()), BOB::get(), CancelOrigin::get()),
+			BadOrigin
+		);
+	})
 }
 
 #[test]
 fn cancel_auto_claim_recipient_funds_and_wire_the_rest() {
-    ExtBuilder::default()
-        .one_hundred_for_alice()
-        .build()
-        .execute_with(|| {
-            let schedule = VestingSchedule {
-                start: 0u64,
-                period: 10u64,
-                period_count: 2u32,
-                per_period: 10u64,
-            };
-            assert_ok!(Vesting::add_vesting_schedule(
-                Origin::signed(ALICE),
-                BOB,
-                schedule.clone()
-            ));
+	ExtBuilder::default().one_hundred_for_alice().build().execute_with(|| {
+		let schedule = VestingSchedule {
+			start: 0u64,
+			period: 10u64,
+			period_count: 2u32,
+			per_period: 10u64,
+		};
+		assert_ok!(Vesting::add_vesting_schedule(
+			RuntimeOrigin::signed(ALICE::get()),
+			BOB::get(),
+			schedule
+		));
 
-            System::set_block_number(11);
+		System::set_block_number(11);
 
-            assert_ok!(Vesting::cancel_all_vesting_schedules(
-                Origin::signed(CancelOrigin::get()),
-                BOB,
-                CancelOrigin::get(),
-                false
-            ));
+		assert_ok!(Vesting::cancel_all_vesting_schedules(
+			RuntimeOrigin::signed(CancelOrigin::get()),
+			BOB::get(),
+			CancelOrigin::get()
+		));
 
-            // Auto claim
-            assert_ok!(PalletBalances::transfer(Origin::signed(BOB), ALICE, 10));
+		// Auto claim
+		assert_ok!(PalletBalances::transfer_allow_death(
+			RuntimeOrigin::signed(BOB::get()),
+			ALICE::get(),
+			10
+		));
 
-            // Wire the rest
-            assert_ok!(PalletBalances::transfer(
-                Origin::signed(CancelOrigin::get()),
-                ALICE,
-                10
-            ));
-        });
+		// Wire the rest
+		assert_ok!(PalletBalances::transfer_allow_death(
+			RuntimeOrigin::signed(CancelOrigin::get()),
+			ALICE::get(),
+			10
+		));
+	});
+}
+
+#[test]
+fn bridge_all_vesting_schedules_does_claim_first() {
+	ExtBuilder::default().one_hundred_for_alice().build().execute_with(|| {
+		let bridge_id = 1;
+		let bridge_name = b"zklocal";
+		let remote_chain_id = 9924;
+		assert_ok!(Vesting::set_bridge(
+			RuntimeOrigin::root(),
+			bridge_id,
+			bridge_name.into(),
+			remote_chain_id
+		));
+		let schedule = VestingSchedule {
+			start: 0u64,
+			period: 10u64,
+			period_count: 2u32,
+			per_period: 10u64,
+		};
+		assert_ok!(Vesting::add_vesting_schedule(
+			RuntimeOrigin::signed(ALICE::get()),
+			BOB::get(),
+			schedule
+		));
+
+		System::set_block_number(11);
+
+		assert_eq!(PalletBalances::free_balance(BOB::get()), 20);
+		assert_eq!(PalletBalances::usable_balance(BOB::get()), 0);
+		assert_ok!(Vesting::bridge_all_vesting_schedules(
+			RuntimeOrigin::signed(BOB::get()),
+			hex!("2E7F3926Ae74FDCDcAde2c2AB50990C5daFD42bD"),
+			bridge_id
+		));
+		assert_eq!(PalletBalances::free_balance(BOB::get()), 10);
+		assert_eq!(PalletBalances::usable_balance(BOB::get()), 10);
+	});
+}
+
+#[test]
+fn bridge_all_vesting_schedules_clears_storage() {
+	ExtBuilder::default().one_hundred_for_alice().build().execute_with(|| {
+		let bridge_id = 1;
+		let bridge_name = b"zklocal";
+		let remote_chain_id = 9924;
+		assert_ok!(Vesting::set_bridge(
+			RuntimeOrigin::root(),
+			bridge_id,
+			bridge_name.into(),
+			remote_chain_id
+		));
+		let schedule = VestingSchedule {
+			start: 0u64,
+			period: 10u64,
+			period_count: 2u32,
+			per_period: 10u64,
+		};
+		assert_ok!(Vesting::add_vesting_schedule(
+			RuntimeOrigin::signed(ALICE::get()),
+			BOB::get(),
+			schedule
+		));
+
+		System::set_block_number(11);
+
+		assert!(<VestingSchedules<Runtime>>::contains_key(BOB::get()));
+		assert_ok!(Vesting::bridge_all_vesting_schedules(
+			RuntimeOrigin::signed(BOB::get()),
+			hex!("2E7F3926Ae74FDCDcAde2c2AB50990C5daFD42bD"),
+			bridge_id
+		));
+		assert!(!<VestingSchedules<Runtime>>::contains_key(BOB::get()));
+		assert!(!<Renounced<Runtime>>::contains_key(BOB::get()));
+	});
+}
+
+#[test]
+fn bridge_all_vesting_schedules_reduces_total_issuance() {
+	ExtBuilder::default().one_hundred_for_alice().build().execute_with(|| {
+		let bridge_id = 1;
+		let bridge_name = b"zklocal";
+		let remote_chain_id = 9924;
+		assert_ok!(Vesting::set_bridge(
+			RuntimeOrigin::root(),
+			bridge_id,
+			bridge_name.into(),
+			remote_chain_id
+		));
+		let schedule = VestingSchedule {
+			start: 0u64,
+			period: 10u64,
+			period_count: 2u32,
+			per_period: 10u64,
+		};
+		assert_ok!(Vesting::add_vesting_schedule(
+			RuntimeOrigin::signed(ALICE::get()),
+			BOB::get(),
+			schedule
+		));
+
+		System::set_block_number(11);
+
+		assert_eq!(PalletBalances::total_issuance(), 100);
+		assert_ok!(Vesting::bridge_all_vesting_schedules(
+			RuntimeOrigin::signed(BOB::get()),
+			hex!("2E7F3926Ae74FDCDcAde2c2AB50990C5daFD42bD"),
+			bridge_id
+		));
+		assert_eq!(PalletBalances::total_issuance(), 90);
+	});
+}
+
+#[test]
+fn bridge_all_vesting_schedules_emits_expected_event() {
+	ExtBuilder::default().one_hundred_for_alice().build().execute_with(|| {
+		let bridge_id = 1;
+		let bridge_name = b"zklocal";
+		let remote_chain_id = 9924;
+		assert_ok!(Vesting::set_bridge(
+			RuntimeOrigin::root(),
+			bridge_id,
+			bridge_name.into(),
+			remote_chain_id
+		));
+		let schedule1 = VestingSchedule {
+			start: 0u64,
+			period: 10u64,
+			period_count: 2u32,
+			per_period: 10u64,
+		};
+		assert_ok!(Vesting::add_vesting_schedule(
+			RuntimeOrigin::signed(ALICE::get()),
+			BOB::get(),
+			schedule1.clone()
+		));
+		let schedule2 = VestingSchedule {
+			start: 12u64,
+			period: 13u64,
+			period_count: 1u32,
+			per_period: 7u64,
+		};
+		assert_ok!(Vesting::add_vesting_schedule(
+			RuntimeOrigin::signed(ALICE::get()),
+			BOB::get(),
+			schedule2.clone()
+		));
+
+		System::set_block_number(11);
+
+		assert_ok!(Vesting::bridge_all_vesting_schedules(
+			RuntimeOrigin::signed(BOB::get()),
+			hex!("2E7F3926Ae74FDCDcAde2c2AB50990C5daFD42bD"),
+			bridge_id
+		));
+		let remaining_grants = BoundedVec::try_from(vec![schedule1, schedule2]).unwrap();
+
+		assert_eq!(
+			System::events().last().unwrap().event,
+			TestEvent::Vesting(Event::BridgeInitiated {
+				to: hex!("2E7F3926Ae74FDCDcAde2c2AB50990C5daFD42bD"),
+				bridge_id: 1,
+				amount: 17,
+				grants: remaining_grants,
+			})
+		);
+	});
+}
+
+#[test]
+fn bridge_all_vesting_schedules_completes_one_sidedly_when_no_grants_after_claim() {
+	ExtBuilder::default().one_hundred_for_alice().build().execute_with(|| {
+		let bridge_id = 1;
+		let bridge_name = b"zklocal";
+		let remote_chain_id = 9924;
+		assert_ok!(Vesting::set_bridge(
+			RuntimeOrigin::root(),
+			bridge_id,
+			bridge_name.into(),
+			remote_chain_id
+		));
+		let schedule = VestingSchedule {
+			start: 0u64,
+			period: 10u64,
+			period_count: 1u32,
+			per_period: 100u64,
+		};
+		assert_ok!(Vesting::add_vesting_schedule(
+			RuntimeOrigin::signed(ALICE::get()),
+			BOB::get(),
+			schedule
+		));
+
+		System::set_block_number(11);
+
+		assert_ok!(Vesting::bridge_all_vesting_schedules(
+			RuntimeOrigin::signed(BOB::get()),
+			hex!("2E7F3926Ae74FDCDcAde2c2AB50990C5daFD42bD"),
+			bridge_id
+		));
+		assert_eq!(PalletBalances::usable_balance(BOB::get()), 100);
+		assert_eq!(
+			System::events().last().unwrap().event,
+			TestEvent::Vesting(Event::NoVestedFundsToBridgeAfterClaim)
+		);
+	});
+}
+
+#[test]
+fn bridge_all_vesting_schedules_works_for_renounced_account() {
+	ExtBuilder::default().one_hundred_for_alice().build().execute_with(|| {
+		let bridge_id = 1;
+		let bridge_name = b"zklocal";
+		let remote_chain_id = 9924;
+		assert_ok!(Vesting::set_bridge(
+			RuntimeOrigin::root(),
+			bridge_id,
+			bridge_name.into(),
+			remote_chain_id
+		));
+		let schedule = VestingSchedule {
+			start: 0u64,
+			period: 10u64,
+			period_count: 1u32,
+			per_period: 100u64,
+		};
+		assert_ok!(Vesting::add_vesting_schedule(
+			RuntimeOrigin::signed(ALICE::get()),
+			BOB::get(),
+			schedule
+		));
+
+		System::set_block_number(11);
+
+		assert_ok!(Vesting::renounce(
+			RuntimeOrigin::signed(CancelOrigin::get()),
+			BOB::get()
+		));
+
+		assert_ok!(Vesting::bridge_all_vesting_schedules(
+			RuntimeOrigin::signed(BOB::get()),
+			hex!("2E7F3926Ae74FDCDcAde2c2AB50990C5daFD42bD"),
+			bridge_id
+		));
+		assert_eq!(PalletBalances::usable_balance(BOB::get()), 100);
+	});
+}
+
+#[test]
+fn set_bridge_fails_if_bridge_already_exists() {
+	ExtBuilder::default().build().execute_with(|| {
+		let bridge_id = 1;
+		let bridge_name = b"zklocal";
+		let remote_chain_id = 9924;
+		assert_ok!(Vesting::set_bridge(
+			RuntimeOrigin::root(),
+			bridge_id,
+			bridge_name.into(),
+			remote_chain_id
+		));
+		assert_err!(
+			Vesting::set_bridge(RuntimeOrigin::root(), bridge_id, bridge_name.into(), remote_chain_id),
+			Error::<Runtime>::BridgeAlreadyExists
+		);
+	});
+}
+
+#[test]
+fn set_bridge_fails_if_name_too_long() {
+	ExtBuilder::default().build().execute_with(|| {
+		let bridge_id = 1;
+		let bridge_name = b"somereallylonglonglongnnnnnnnnameeee";
+		let remote_chain_id = 9924;
+		assert_err!(
+			Vesting::set_bridge(RuntimeOrigin::root(), bridge_id, bridge_name.into(), remote_chain_id),
+			Error::<Runtime>::BridgeNameTooLong
+		);
+	});
+}
+
+#[test]
+fn set_bridge_fails_if_non_root() {
+	ExtBuilder::default().build().execute_with(|| {
+		let bridge_id = 1;
+		let bridge_name = b"zklocal";
+		let remote_chain_id = 9924;
+		assert_err!(
+			Vesting::set_bridge(
+				RuntimeOrigin::signed(ALICE::get()),
+				bridge_id,
+				bridge_name.into(),
+				remote_chain_id
+			),
+			BadOrigin
+		);
+	});
+}
+
+#[test]
+fn remove_bridge_fails_if_non_root() {
+	ExtBuilder::default().build().execute_with(|| {
+		let bridge_id = 1;
+		assert_err!(
+			Vesting::remove_bridge(RuntimeOrigin::signed(ALICE::get()), bridge_id),
+			BadOrigin
+		);
+	});
+}
+
+#[test]
+fn remove_bridge_works() {
+	ExtBuilder::default().build().execute_with(|| {
+		let bridge_id = 1;
+		let bridge_name = b"zklocal";
+		let remote_chain_id = 9924;
+		assert_ok!(Vesting::set_bridge(
+			RuntimeOrigin::root(),
+			bridge_id,
+			bridge_name.into(),
+			remote_chain_id
+		));
+		let details = <Bridges<Runtime>>::get(BridgeId(bridge_id)).unwrap();
+		assert_eq!(
+			details,
+			BridgeDetails {
+				name: bridge_name.to_vec().try_into().unwrap(),
+				chain_id: remote_chain_id
+			}
+		);
+		assert_ok!(Vesting::remove_bridge(RuntimeOrigin::root(), bridge_id));
+		assert!(!<Bridges<Runtime>>::contains_key(BridgeId(bridge_id)));
+	});
+}
+
+#[test]
+fn remove_bridge_fails_if_bridge_not_found() {
+	ExtBuilder::default().build().execute_with(|| {
+		let bridge_id = 1;
+		assert_err!(
+			Vesting::remove_bridge(RuntimeOrigin::root(), bridge_id),
+			Error::<Runtime>::BridgeNotFound
+		);
+	});
+}
+
+#[test]
+fn bridge_all_vesting_schedules_fails_if_no_bridge() {
+	ExtBuilder::default().one_hundred_for_alice().build().execute_with(|| {
+		let bridge_id = 1;
+		assert_err!(
+			Vesting::bridge_all_vesting_schedules(
+				RuntimeOrigin::signed(BOB::get()),
+				hex!("2E7F3926Ae74FDCDcAde2c2AB50990C5daFD42bD"),
+				bridge_id
+			),
+			Error::<Runtime>::BridgeNotFound
+		);
+	});
 }
 
 #[test]
 fn cancel_clears_storage() {
-    ExtBuilder::default()
-        .one_hundred_for_alice()
-        .build()
-        .execute_with(|| {
-            let schedule = VestingSchedule {
-                start: 0u64,
-                period: 10u64,
-                period_count: 2u32,
-                per_period: 10u64,
-            };
-            assert_ok!(Vesting::add_vesting_schedule(
-                Origin::signed(ALICE),
-                BOB,
-                schedule.clone()
-            ));
+	ExtBuilder::default().one_hundred_for_alice().build().execute_with(|| {
+		let schedule = VestingSchedule {
+			start: 0u64,
+			period: 10u64,
+			period_count: 2u32,
+			per_period: 10u64,
+		};
+		assert_ok!(Vesting::add_vesting_schedule(
+			RuntimeOrigin::signed(ALICE::get()),
+			BOB::get(),
+			schedule
+		));
 
-            System::set_block_number(11);
+		System::set_block_number(11);
 
-            assert_ok!(Vesting::cancel_all_vesting_schedules(
-                Origin::signed(CancelOrigin::get()),
-                BOB,
-                CancelOrigin::get(),
-                false,
-            ));
+		assert_ok!(Vesting::cancel_all_vesting_schedules(
+			RuntimeOrigin::signed(CancelOrigin::get()),
+			BOB::get(),
+			CancelOrigin::get()
+		));
 
-            assert!(!VestingSchedules::<Runtime>::contains_key(BOB));
-        });
+		assert!(!<VestingSchedules<Runtime>>::contains_key(BOB::get()));
+	});
 }
-
+#[allow(clippy::assertions_on_constants)]
 #[test]
 fn cancel_tolerates_corrupted_state() {
-    ExtBuilder::default()
-        .one_hundred_for_alice()
-        .build()
-        .execute_with(|| {
-            let schedule = VestingSchedule {
-                start: 0u64,
-                period: 10u64,
-                period_count: 2u32,
-                per_period: 10u64,
-            };
-            assert_ok!(Vesting::add_vesting_schedule(
-                Origin::signed(ALICE),
-                BOB,
-                schedule.clone()
-            ));
+	ExtBuilder::default().one_hundred_for_alice().build().execute_with(|| {
+		let allice_vesting_to_bob_schedule = VestingSchedule {
+			start: 0u64,
+			period: 10u64,
+			period_count: 2u32,
+			per_period: 10u64,
+		};
 
-            // We also add some vesting schedules without any balances to simulate
-            // a corrupted / badly canceled state.
-            VestingSchedules::<Runtime>::mutate(BOB, |s| {
-                s.push(VestingSchedule {
-                    start: 0u64,
-                    period: 10u64,
-                    period_count: 2u32,
-                    per_period: 1_000u64, // definitely too much money
-                })
-            });
+		// Initial Balance Status
+		assert_eq!(mock::balances(&ALICE::get()), (100, 0));
+		assert_eq!(PalletBalances::total_balance(&ALICE::get()), 100);
 
-            System::set_block_number(11);
+		assert_eq!(mock::balances(&BOB::get()), (0, 0));
+		assert_eq!(PalletBalances::total_balance(&BOB::get()), 0);
 
-            assert_ok!(Vesting::cancel_all_vesting_schedules(
-                Origin::signed(CancelOrigin::get()),
-                BOB,
-                CancelOrigin::get(),
-                true,
-            ));
+		assert_eq!(mock::balances(&CancelOrigin::get()), (0, 0));
+		assert_eq!(PalletBalances::total_balance(&CancelOrigin::get()), 0);
 
-            assert!(!VestingSchedules::<Runtime>::contains_key(BOB));
-        });
-}
+		assert!(!<VestingSchedules<Runtime>>::contains_key(BOB::get()));
 
-#[test]
-fn overwrite_vesting_schedules_refuse_non_force_origin() {
-    ExtBuilder::default().build().execute_with(|| {
-        assert_noop!(
-            Vesting::overwrite_vesting_schedules(Origin::signed(ALICE), BOB, vec![],),
-            BadOrigin
-        );
-    });
-}
+		let ans = Vesting::add_vesting_schedule(
+			RuntimeOrigin::signed(ALICE::get()),
+			BOB::get(),
+			allice_vesting_to_bob_schedule.clone(),
+		);
+		assert_ok!(ans);
+		assert!(<VestingSchedules<Runtime>>::contains_key(BOB::get()));
 
-#[test]
-fn overwrite_vesting_schedules_refuse_empty_schedules() {
-    ExtBuilder::default().build().execute_with(|| {
-        assert_noop!(
-            Vesting::overwrite_vesting_schedules(Origin::signed(ForceOrigin::get()), BOB, vec![],),
-            Error::<Runtime>::EmptySchedules,
-        );
-    });
-}
+		// Event & Balance Status
+		let mut expected = vec![Event::VestingScheduleAdded(
+			ALICE::get(),
+			BOB::get(),
+			VestingSchedule {
+				start: 0,
+				period: 10,
+				period_count: 2,
+				per_period: 10,
+			},
+		)];
+		assert_eq!(context_events(), expected);
 
-#[test]
-fn overwrite_vesting_schedules_refuse_invalid_schedules() {
-    ExtBuilder::default().build().execute_with(|| {
-        assert_noop!(
-            Vesting::overwrite_vesting_schedules(
-                Origin::signed(ForceOrigin::get()),
-                BOB,
-                vec![VestingSchedule {
-                    start: 1u64,
-                    period: 0u64,
-                    period_count: 1u32,
-                    per_period: 100u64,
-                }],
-            ),
-            Error::<Runtime>::ZeroVestingPeriod,
-        );
-    });
-}
+		assert_eq!(mock::balances(&ALICE::get()), (80, 0));
+		assert_eq!(PalletBalances::total_balance(&ALICE::get()), 80);
 
-#[test]
-fn overwrite_vesting_schedules_relock_appropriate_number_of_coins() {
-    ExtBuilder::default()
-        .one_hundred_for_alice()
-        .build()
-        .execute_with(|| {
-            let schedule = VestingSchedule {
-                start: 0u64,
-                period: 10u64,
-                period_count: 2u32,
-                per_period: 10u64,
-            };
-            assert_ok!(Vesting::add_vesting_schedule(
-                Origin::signed(ALICE),
-                BOB,
-                schedule.clone()
-            ));
+		assert_eq!(mock::balances(&BOB::get()), (20, 20));
+		assert_eq!(PalletBalances::total_balance(&BOB::get()), 20);
 
-            System::set_block_number(5);
+		assert_eq!(mock::balances(&CancelOrigin::get()), (0, 0));
+		assert_eq!(PalletBalances::total_balance(&CancelOrigin::get()), 0);
 
-            let modified_schedules = vec![
-                VestingSchedule {
-                    start: 0u64,
-                    period: 5u64,
-                    period_count: 2u32,
-                    per_period: 5u64,
-                },
-                VestingSchedule {
-                    start: 0u64,
-                    period: 1u64,
-                    period_count: 2u32,
-                    per_period: 5u64,
-                },
-            ];
+		// We also add some vesting schedules without any balances to simulate
+		// a corrupted / badly canceled state.
+		let bob_modified_vesting_schedule = VestingSchedule {
+			start: 0u64,
+			period: 10u64,
+			period_count: 2u32,
+			per_period: 1_000u64, // definitely too much money
+		};
 
-            assert_ok!(Vesting::overwrite_vesting_schedules(
-                Origin::signed(ForceOrigin::get()),
-                BOB,
-                modified_schedules.clone(),
-            ));
+		let ans = <VestingSchedules<Runtime>>::try_mutate(BOB::get(), |s| -> Result<(), VestingSchedule<u64, u64>> {
+			s.try_push(bob_modified_vesting_schedule.clone())
+		});
 
-            assert_eq!(Vesting::vesting_schedules(BOB), modified_schedules);
-            assert_eq!(
-                PalletBalances::locks(&BOB).to_vec().pop(),
-                Some(BalanceLock {
-                    id: VESTING_LOCK_ID,
-                    amount: 5u64,
-                    reasons: Reasons::All,
-                })
-            );
-        });
-}
+		assert_ok!(ans);
 
-#[test]
-fn overwrite_vesting_schedules_may_clean_storage() {
-    ExtBuilder::default()
-        .one_hundred_for_alice()
-        .build()
-        .execute_with(|| {
-            let schedule = VestingSchedule {
-                start: 0u64,
-                period: 10u64,
-                period_count: 2u32,
-                per_period: 10u64,
-            };
-            assert_ok!(Vesting::add_vesting_schedule(
-                Origin::signed(ALICE),
-                BOB,
-                schedule.clone()
-            ));
+		assert!(<VestingSchedules<Runtime>>::contains_key(BOB::get()));
 
-            System::set_block_number(50);
+		if let Ok(schedule_from_chain) = <VestingSchedules<Runtime>>::try_get(BOB::get()) {
+			assert_eq!(schedule_from_chain.len(), 2);
 
-            // 5 periods of 2 blocks. should be completed after overwriting
-            let modified_schedules = vec![VestingSchedule {
-                start: 0u64,
-                period: 5u64,
-                period_count: 2u32,
-                per_period: 10u64,
-            }];
+			assert_eq!(schedule_from_chain[0], allice_vesting_to_bob_schedule);
+			assert_eq!(schedule_from_chain[1], bob_modified_vesting_schedule);
+		} else {
+			assert!(false, "Expected Bob to have some grants, Got error instead");
+		}
 
-            assert_ok!(Vesting::overwrite_vesting_schedules(
-                Origin::signed(ForceOrigin::get()),
-                BOB,
-                modified_schedules.clone(),
-            ));
+		System::set_block_number(11);
+		assert!(<VestingSchedules<Runtime>>::contains_key(BOB::get()));
 
-            assert_eq!(Vesting::vesting_schedules(BOB), vec![]);
-            assert_eq!(PalletBalances::locks(&BOB).to_vec().pop(), None);
-        });
+		let res_cancel_all_vesting_schedules = Vesting::cancel_all_vesting_schedules(
+			RuntimeOrigin::signed(CancelOrigin::get()),
+			BOB::get(),
+			CancelOrigin::get(),
+		);
+		assert_ok!(res_cancel_all_vesting_schedules);
+
+		assert!(!<VestingSchedules<Runtime>>::contains_key(BOB::get()));
+
+		// Event & Balance Status
+		expected.append(&mut vec![Event::VestingSchedulesCanceled(2)]);
+
+		assert_eq!(context_events(), expected);
+
+		assert_eq!(mock::balances(&ALICE::get()), (80, 0));
+		assert_eq!(PalletBalances::total_balance(&ALICE::get()), 80);
+
+		assert_eq!(mock::balances(&BOB::get()), (0, 0));
+		assert_eq!(PalletBalances::total_balance(&BOB::get()), 0);
+
+		assert_eq!(mock::balances(&CancelOrigin::get()), (20, 0));
+		assert_eq!(PalletBalances::total_balance(&CancelOrigin::get()), 20);
+	});
 }
 
 #[test]
 fn cannot_vest_to_self() {
-    ExtBuilder::default()
-        .one_hundred_for_alice()
-        .build()
-        .execute_with(|| {
-            assert_noop!(
-                Vesting::add_vesting_schedule(
-                    Origin::signed(ALICE),
-                    ALICE,
-                    VestingSchedule {
-                        start: 0u64,
-                        period: 10u64,
-                        period_count: 1u32,
-                        per_period: 100u64,
-                    }
-                ),
-                Error::<Runtime>::VestingToSelf
-            );
-        });
+	ExtBuilder::default().one_hundred_for_alice().build().execute_with(|| {
+		assert_noop!(
+			Vesting::add_vesting_schedule(
+				RuntimeOrigin::signed(ALICE::get()),
+				ALICE::get(),
+				VestingSchedule {
+					start: 0u64,
+					period: 10u64,
+					period_count: 1u32,
+					per_period: 100u64,
+				}
+			),
+			Error::<Runtime>::VestingToSelf
+		);
+	});
+}
+
+#[test]
+fn add_vesting_schedule_overflow_check() {
+	ExtBuilder::default()
+		.balances(vec![(ALICE::get(), 1000)])
+		.build()
+		.execute_with(|| {
+			System::set_block_number(1);
+
+			let schedules = [
+				VestingSchedule {
+					start: 0u64,
+					period: 10u64,
+					period_count: 1u32,
+					per_period: 100u64,
+				},
+				VestingSchedule {
+					start: 0u64,
+					period: 10u64,
+					period_count: 1u32,
+					per_period: 100u64,
+				},
+				VestingSchedule {
+					start: 0u64,
+					period: 10u64,
+					period_count: 1u32,
+					per_period: 100u64,
+				},
+			];
+
+			assert_ok!(Vesting::add_vesting_schedule(
+				RuntimeOrigin::signed(ALICE::get()),
+				BOB::get(),
+				schedules[0].clone(),
+			));
+			assert_eq!(Vesting::vesting_schedules(BOB::get()).to_vec().len(), 1);
+
+			let expected = vec![Event::VestingScheduleAdded(1, 2, schedules[0].clone())];
+
+			assert_eq!(context_events(), expected);
+
+			assert_ok!(Vesting::add_vesting_schedule(
+				RuntimeOrigin::signed(ALICE::get()),
+				BOB::get(),
+				schedules[1].clone(),
+			));
+			assert_eq!(Vesting::vesting_schedules(BOB::get()).to_vec().len(), 2);
+
+			let expected = vec![
+				Event::VestingScheduleAdded(1, 2, schedules[0].clone()),
+				Event::VestingScheduleAdded(1, 2, schedules[1].clone()),
+			];
+
+			assert_eq!(context_events(), expected);
+
+			assert_err!(
+				Vesting::add_vesting_schedule(RuntimeOrigin::signed(ALICE::get()), BOB::get(), schedules[2].clone(),),
+				<Error<Runtime>>::MaxScheduleOverflow,
+			);
+
+			assert_eq!(Vesting::vesting_schedules(BOB::get()).to_vec().len(), 2);
+		});
+}
+
+#[test]
+fn add_vesting_schedule_overflow_cfg_min_check() {
+	ExtBuilder::default()
+		.balances(vec![(ALICE::get(), 1000)])
+		.build()
+		.execute_with(|| {
+			System::set_block_number(1);
+
+			let schedules = [VestingSchedule {
+				start: 0u64,
+				period: 10u64,
+				period_count: 1u32,
+				per_period: 100u64,
+			}];
+
+			mock::MAX_SCHEDULE.with(|v| *v.borrow_mut() = 0);
+
+			assert_eq!(Vesting::vesting_schedules(BOB::get()).to_vec().len(), 0);
+
+			assert_err!(
+				Vesting::add_vesting_schedule(RuntimeOrigin::signed(ALICE::get()), BOB::get(), schedules[0].clone(),),
+				<Error<Runtime>>::MaxScheduleOverflow,
+			);
+
+			assert_eq!(Vesting::vesting_schedules(BOB::get()).to_vec().len(), 0);
+
+			let expected = vec![];
+			assert_eq!(context_events(), expected);
+
+			mock::MAX_SCHEDULE.with(|v| *v.borrow_mut() = 1);
+
+			assert_ok!(Vesting::add_vesting_schedule(
+				RuntimeOrigin::signed(ALICE::get()),
+				BOB::get(),
+				schedules[0].clone(),
+			));
+			assert_eq!(Vesting::vesting_schedules(BOB::get()).to_vec().len(), 1);
+
+			let expected = vec![Event::VestingScheduleAdded(1, 2, schedules[0].clone())];
+
+			assert_eq!(context_events(), expected);
+		});
+}
+
+#[test]
+fn add_vesting_schedule_overflow_cfg_max_check() {
+	ExtBuilder::default()
+		.balances(vec![(ALICE::get(), 10_000_000)])
+		.build()
+		.execute_with(|| {
+			System::set_block_number(1);
+
+			let schedules = [VestingSchedule {
+				start: 0u64,
+				period: 10u64,
+				period_count: 1u32,
+				per_period: 100u64,
+			}];
+
+			let schedule_max = 500;
+
+			mock::MAX_SCHEDULE.with(|v| *v.borrow_mut() = schedule_max);
+
+			(0..schedule_max).for_each(|iter_index| {
+				assert_ok!(Vesting::add_vesting_schedule(
+					RuntimeOrigin::signed(ALICE::get()),
+					BOB::get(),
+					schedules[0].clone(),
+				));
+				assert_eq!(
+					Vesting::vesting_schedules(BOB::get()).to_vec().len() as u32,
+					iter_index + 1
+				);
+				assert_eq!(context_events().len() as u32, iter_index + 1);
+			});
+
+			assert_err!(
+				Vesting::add_vesting_schedule(RuntimeOrigin::signed(ALICE::get()), BOB::get(), schedules[0].clone(),),
+				<Error<Runtime>>::MaxScheduleOverflow,
+			);
+
+			assert_eq!(
+				Vesting::vesting_schedules(BOB::get()).to_vec().len(),
+				schedule_max as usize
+			);
+			assert_eq!(context_events().len(), schedule_max as usize);
+		});
+}
+
+#[test]
+fn renounce_only_works_for_cancel_origin() {
+	ExtBuilder::default().build().execute_with(|| {
+		assert_noop!(
+			Vesting::renounce(RuntimeOrigin::signed(ALICE::get()), BOB::get()),
+			BadOrigin
+		);
+	})
+}
+
+#[test]
+fn renounce_privileges() {
+	ExtBuilder::default().one_hundred_for_alice().build().execute_with(|| {
+		let schedule = VestingSchedule {
+			start: 0u64,
+			period: 10u64,
+			period_count: 2u32,
+			per_period: 10u64,
+		};
+		assert_ok!(Vesting::add_vesting_schedule(
+			RuntimeOrigin::signed(ALICE::get()),
+			BOB::get(),
+			schedule
+		));
+
+		assert!(!Vesting::renounced(BOB::get()));
+		assert_ok!(Vesting::renounce(
+			RuntimeOrigin::signed(CancelOrigin::get()),
+			BOB::get()
+		));
+		assert!(Vesting::renounced(BOB::get()));
+		assert_noop!(
+			Vesting::cancel_all_vesting_schedules(
+				RuntimeOrigin::signed(CancelOrigin::get()),
+				BOB::get(),
+				CancelOrigin::get()
+			),
+			Error::<Runtime>::Renounced
+		);
+	});
 }

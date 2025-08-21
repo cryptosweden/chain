@@ -1,6 +1,6 @@
 /*
  * This file is part of the Nodle Chain distributed at https://github.com/NodleCode/chain
- * Copyright (C) 2022  Nodle International
+ * Copyright (C) 2020-2022  Nodle International
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,53 +25,62 @@ pub use pallet::*;
 
 #[frame_support::pallet]
 pub mod pallet {
-    use frame_support::{
-        pallet_prelude::*, traits::EnsureOrigin, weights::GetDispatchInfo, Parameter,
-    };
-    use frame_system::pallet_prelude::*;
-    use sp_runtime::{traits::Dispatchable, DispatchResult};
-    use sp_std::prelude::Box;
+	use frame_support::{
+		dispatch::GetDispatchInfo,
+		pallet_prelude::*,
+		traits::{EnsureOrigin, StorageVersion, UnfilteredDispatchable},
+		Parameter,
+	};
+	use frame_system::pallet_prelude::*;
+	use sp_runtime::DispatchResult;
+	use sp_std::prelude::Box;
 
-    #[pallet::config]
-    pub trait Config: frame_system::Config {
-        type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
-        type Call: Parameter + Dispatchable<Origin = Self::Origin> + GetDispatchInfo;
-        /// Origin that can call this module and execute sudo actions. Typically
-        /// the `collective` module.
-        type ExternalOrigin: EnsureOrigin<Self::Origin>;
-    }
+	const STORAGE_VERSION: StorageVersion = StorageVersion::new(0);
 
-    #[pallet::pallet]
-    #[pallet::generate_store(pub(super) trait Store)]
-    #[pallet::without_storage_info]
-    pub struct Pallet<T>(PhantomData<T>);
+	#[pallet::config]
+	pub trait Config: frame_system::Config {
+		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+		type RuntimeCall: Parameter + UnfilteredDispatchable<RuntimeOrigin = Self::RuntimeOrigin> + GetDispatchInfo;
 
-    #[pallet::hooks]
-    impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {}
+		/// Origin that can call this module and execute sudo actions. Typically
+		/// the `collective` module.
+		type ExternalOrigin: EnsureOrigin<Self::RuntimeOrigin>;
+	}
 
-    #[pallet::call]
-    impl<T: Config> Pallet<T> {
-        /// Let the configured origin dispatch a call as root
-        #[pallet::weight(call.get_dispatch_info().weight + 10_000)]
-        pub fn apply(
-            origin: OriginFor<T>,
-            call: Box<<T as Config>::Call>,
-        ) -> DispatchResultWithPostInfo {
-            T::ExternalOrigin::ensure_origin(origin)?;
+	#[pallet::pallet]
+	#[pallet::storage_version(STORAGE_VERSION)]
+	pub struct Pallet<T>(PhantomData<T>);
 
-            // Shamelessly stollen from the `sudo` module
-            let res = call.dispatch(frame_system::RawOrigin::Root.into());
+	#[pallet::hooks]
+	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {}
 
-            Self::deposit_event(Event::RootOp(res.map(|_| ()).map_err(|e| e.error)));
+	#[allow(clippy::boxed_local)]
+	#[pallet::call]
+	impl<T: Config> Pallet<T> {
+		/// Let the configured origin dispatch a call as root
+		#[pallet::call_index(0)]
+		#[pallet::weight({
+			let dispatch_info = call.get_dispatch_info();
+			(
+				dispatch_info.weight.saturating_add(Weight::from_parts(10_000, 0)),
+				dispatch_info.class,
+			)
+		})]
+		pub fn apply(origin: OriginFor<T>, call: Box<<T as Config>::RuntimeCall>) -> DispatchResultWithPostInfo {
+			T::ExternalOrigin::ensure_origin(origin)?;
 
-            Ok(().into())
-        }
-    }
+			// Shamelessly stollen from the `sudo` module
+			let res = call.dispatch_bypass_filter(frame_system::RawOrigin::Root.into());
+			Self::deposit_event(Event::RootOp(res.map(|_| ()).map_err(|e| e.error)));
 
-    #[pallet::event]
-    #[pallet::generate_deposit(pub(super) fn deposit_event)]
-    pub enum Event<T: Config> {
-        /// A root operation was executed, show result
-        RootOp(DispatchResult),
-    }
+			Ok(().into())
+		}
+	}
+
+	#[pallet::event]
+	#[pallet::generate_deposit(pub(super) fn deposit_event)]
+	pub enum Event<T: Config> {
+		/// A root operation was executed, show result
+		RootOp(DispatchResult),
+	}
 }

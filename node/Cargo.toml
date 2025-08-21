@@ -1,0 +1,106 @@
+[package]
+authors.workspace = true
+build = "build.rs"
+edition.workspace = true
+name = "nodle-parachain"
+version.workspace = true
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[build-dependencies]
+substrate-build-script-utils.workspace = true
+
+[[bin]]
+name = "nodle-parachain"
+path = "src/main.rs"
+
+[features]
+runtime-benchmarks = [
+	"runtime-eden/runtime-benchmarks",
+	"polkadot-service/runtime-benchmarks",
+]
+
+[dependencies]
+clap = { workspace = true, features = ["derive"] }
+derive_more.workspace = true
+log = { workspace = true, default-features = true }
+codec.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+futures = "0.3.28"
+
+# RPC related Dependencies
+jsonrpsee = { workspace = true, features = ["server"] }
+
+# Local Dependencies
+runtime-eden = { path = "../runtimes/eden" }
+primitives = { path = "../primitives" }
+
+# Substrate Dependencies
+frame-benchmarking.workspace = true
+frame-benchmarking-cli.workspace = true
+
+pallet-transaction-payment-rpc.workspace = true
+
+frame-rpc-system.workspace = true
+substrate-prometheus-endpoint.workspace = true
+
+## Substrate Client Dependencies
+sc-basic-authorship.workspace = true
+sc-chain-spec.workspace = true
+sc-cli.workspace = true
+sc-client-api.workspace = true
+sc-consensus.workspace = true
+sc-executor.workspace = true
+sc-keystore.workspace = true
+sc-network.workspace = true
+sc-network-sync.workspace = true
+sc-offchain.workspace = true
+sc-rpc.workspace = true
+sc-rpc-api.workspace = true
+sc-service.workspace = true
+sc-telemetry.workspace = true
+sc-transaction-pool.workspace = true
+sc-transaction-pool-api.workspace = true
+sc-tracing.workspace = true
+sc-sysinfo.workspace = true
+
+## Substrate Primitive Dependencies
+sp-io.workspace = true
+sp-api.workspace = true
+sp-block-builder.workspace = true
+sp-blockchain.workspace = true
+sp-consensus.workspace = true
+sp-consensus-aura.workspace = true
+sp-core.workspace = true
+sp-inherents.workspace = true
+sp-keystore.workspace = true
+sp-offchain.workspace = true
+sp-runtime.workspace = true
+sp-session.workspace = true
+sp-timestamp.workspace = true
+sp-transaction-pool.workspace = true
+sp-state-machine.workspace = true
+
+# Cumulus dependencies
+cumulus-client-cli.workspace = true
+cumulus-client-collator.workspace = true
+cumulus-client-consensus-aura.workspace = true
+cumulus-client-consensus-common.workspace = true
+cumulus-client-consensus-proposer.workspace = true
+cumulus-client-service.workspace = true
+cumulus-primitives-core.workspace = true
+cumulus-primitives-parachain-inherent.workspace = true
+cumulus-relay-chain-inprocess-interface.workspace = true
+cumulus-relay-chain-interface.workspace = true
+cumulus-relay-chain-rpc-interface.workspace = true
+
+# Polkadot dependencies
+polkadot-cli.workspace = true
+polkadot-parachain-primitives.workspace = true
+polkadot-primitives.workspace = true
+polkadot-service.workspace = true
+xcm = { workspace = true, default-features = false }
+
+hex-literal = { workspace = true }

@@ -1,25 +1,42 @@
-// Copyright 2019-2020 Parity Technologies (UK) Ltd.
-// This file is part of Substrate.
+/*
+ * This file is part of the Nodle Chain distributed at https://github.com/NodleCode/chain
+ * Copyright (C) 2020-2022  Nodle International
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
-// Substrate is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-
-// Substrate is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-
-// You should have received a copy of the GNU General Public License
-// along with Substrate.  If not, see <http://www.gnu.org/licenses/>.
-
-use substrate_wasm_builder::WasmBuilder;
-
+#[cfg(all(feature = "std", not(feature = "metadata-hash")))]
 fn main() {
-    WasmBuilder::new()
-        .with_current_project()
-        .export_heap_base()
-        .import_memory()
-        .build()
+	substrate_wasm_builder::WasmBuilder::build_using_defaults()
 }
+
+#[cfg(all(feature = "std", feature = "metadata-hash"))]
+fn main() {
+	substrate_wasm_builder::WasmBuilder::init_with_defaults()
+		.enable_metadata_hash("NODL", 11)
+		.build();
+	// Since token name is different for our testnet, we need to build a separate binary
+	substrate_wasm_builder::WasmBuilder::init_with_defaults()
+		.set_file_name("wasm_binary_test.rs")
+		.enable_metadata_hash("notNodl", 11)
+		.build();
+	// Since token name is different for our local/dev chain, we need to build a separate binary
+	substrate_wasm_builder::WasmBuilder::init_with_defaults()
+		.set_file_name("wasm_binary_dev.rs")
+		.enable_metadata_hash("DevNODL", 11)
+		.build();
+}
+
+#[cfg(not(feature = "std"))]
+fn main() {}

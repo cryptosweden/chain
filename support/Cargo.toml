@@ -1,5 +1,16 @@
 [package]
-authors = ["Eliott Teissonniere <git.eliott@teissonniere.org>"]
-edition = "2021"
+authors.workspace = true
+edition.workspace = true
 name = "support"
-version = "2.0.17"
+version.workspace = true
+
+[dependencies]
+codec = { workspace = true, default-features = false, features = ["derive"] }
+scale-info = { workspace = true, default-features = false, features = ["derive"] }
+frame-support = { workspace = true, default-features = false }
+
+[features]
+default = ["std"]
+std = [
+    "frame-support/std",
+]

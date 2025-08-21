@@ -1,6 +1,6 @@
 /*
  * This file is part of the Nodle Chain distributed at https://github.com/NodleCode/chain
- * Copyright (C) 2022  Nodle International
+ * Copyright (C) 2020-2022  Nodle International
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,7 +23,7 @@
 
 use super::*;
 
-use frame_benchmarking::{account, benchmarks_instance_pallet, impl_benchmark_test_suite};
+use frame_benchmarking::{account, benchmarks_instance_pallet, impl_benchmark_test_suite, BenchmarkError};
 use frame_support::traits::{EnsureOrigin, UnfilteredDispatchable};
 use frame_system::RawOrigin;
 use sp_runtime::traits::Saturating;
@@ -35,22 +35,27 @@ use crate::Pallet as Reserve;
 const SEED: u32 = 0;
 
 benchmarks_instance_pallet! {
-    tip {
-        let tipper = account("caller", 0, SEED);
-        let value = 100u32.into();
-        let _ = T::Currency::make_free_balance_be(&tipper, value);
-    }: _(RawOrigin::Signed(tipper), value)
+	tip {
+		let tipper = account("caller", 0, SEED);
+		let smallest_usable_amount = T::Currency::minimum_balance().saturating_add(1u32.into());
+		let starting_amount = smallest_usable_amount.saturating_add(smallest_usable_amount);
+		let tip_amount = smallest_usable_amount;
+		let _ = T::Currency::make_free_balance_be(&tipper,starting_amount);
+	}: _(RawOrigin::Signed(tipper), tip_amount)
 
-    spend {
-        let dest = account("dest", 0, SEED);
-        let value = T::Currency::minimum_balance().saturating_mul(100u32.into());
+	spend {
+		let dest = account("dest", 0, SEED);
+		let smallest_usable_amount = T::Currency::minimum_balance();
+		let starting_amount = smallest_usable_amount.saturating_add(smallest_usable_amount);
 
-        let call = Call::<T, I>::spend{
-            to: dest,
-            amount: value
-        };
-        let origin = T::ExternalOrigin::successful_origin();
-    }: { call.dispatch_bypass_filter(origin)? }
+		T::Currency::make_free_balance_be(&T::PalletId::get().into_account_truncating(),starting_amount);
 
-    impl_benchmark_test_suite!(Reserve, crate::tests::new_test_ext(), crate::tests::Test,);
+		let call = Call::<T, I>::spend{
+			to: dest,
+			amount: smallest_usable_amount
+		};
+		let origin = T::ExternalOrigin::try_successful_origin().map_err(|_| BenchmarkError::Weightless)?;
+	}: { call.dispatch_bypass_filter(origin)? }
+
+	impl_benchmark_test_suite!(Reserve, crate::tests::new_test_ext(), crate::tests::Test,);
 }

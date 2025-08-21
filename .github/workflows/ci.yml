@@ -6,103 +6,167 @@ on:
       - master
   pull_request:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to run the workflow on"
+        required: true
+      run_specific_job:
+        description: "Specify a job to run (test-runtime, try-runtime-execute, etc.)"
+        required: true
 
 env:
-  nightly: nightly-2021-11-01
+  toolchain: stable
   target: wasm32-unknown-unknown
-  tarpaulin-vers: '0.18.4'
   try-runtime-chain: dev
-  try-runtime-uri: wss://main3.nodleprotocol.io:443
+  try-runtime-uri: wss://api-eden.dwellir.com:443/
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+  RUSTFLAGS: ""
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v2
-    - uses: actions-rs/toolchain@v1
-      with:
-        profile: minimal
-        toolchain: ${{ env.nightly }}
-        override: true
-        target: ${{ env.target }}
-
-    - name: Cache cargo registry
-      uses: actions/cache@v2.1.7
-      with:
-        path: ~/.cargo/registry
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-registry-
-
-    - name: Cache cargo index
-      uses: actions/cache@v2.1.7
-      with:
-        path: ~/.cargo/git
-        key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-index-
-
-    - name: Cache cargo build
-      uses: actions/cache@v2.1.7
-      with:
-        path: target
-        key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-build-target-
-
-    - name: Run cargo-tarpaulin
-      uses: actions-rs/tarpaulin@v0.1
-      with:
-        version: ${{ env.tarpaulin-vers }}
-        args: '--avoid-cfg-tarpaulin --verbose --all-features --bin nodle-main --timeout 120'
-
-    - name: Upload to Codecov
-      uses: codecov/codecov-action@v2.0.3
-      with:
-        fail_ci_if_error: true
-
-  try-runtime:
+  json-lints:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-
-      - name: Install latest stable Rust
-        uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v4
+      - name: Check for json syntax errors 1
+        run: "for i in `git ls-tree --full-tree -r --name-only HEAD |grep json$`; do echo Checking $i:; json_pp <$i >/dev/null || echo ERROR: $i failed; done"
+      - name: Check for json syntax errors 2
+        run: "for i in `git ls-tree --full-tree -r --name-only HEAD |grep json$`; do echo Checking $i:; json_pp <$i >/dev/null ; done"
+  lints:
+    runs-on: ubuntu-latest-8-cores
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          profile: minimal
-          toolchain: stable
-
-      - name: Install Rust nightly
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: ${{ env.nightly }}
+          toolchain: ${{ env.toolchain }}
+          components: rustfmt, clippy, rust-src
           target: ${{ env.target }}
-
-      - name: Cargo build --features=try-runtime
-        uses: actions-rs/cargo@v1
+      - name: Rustfmt Check
+        uses: actions-rust-lang/rustfmt@v1
+      - name: Install protobuf-compiler
+        run: |
+          sudo apt-get install protobuf-compiler
+      - name: Clippy
+        uses: actions-rs-plus/clippy-check@v2
         with:
-          command: build
-          args: --release --features=try-runtime
+          args: --all-features -- -A clippy::type_complexity -A clippy::identity_op -A clippy::boxed_local -D dead_code
+          toolchain: ${{ env.toolchain }}
 
-      - name: Try Runtime
-        uses: actions-rs/cargo@v1
-        with:
-          command: run
-          args: --release --bin nodle-main --features=try-runtime try-runtime --execution native --chain ${{ env.try-runtime-chain }} on-runtime-upgrade live -u ${{ env.try-runtime-uri }}
-
-  fmt:
+  test-runtime:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.toolchain }}
+          components: rust-src
+          target: ${{ env.target }}
+      - name: Install protobuf-compiler
+        run: |
+          sudo apt-get install protobuf-compiler
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.5
+      - name: Unit tests
+        # Other tests ran below
+        run: cargo test --all-features -p nodle-parachain
 
-    - name: Setup toolchain
-      run: ./scripts/init.sh
+  tests-with-linecoverage:
+    runs-on: ubuntu-latest
 
-    - name: Install rustfmt
-      run: rustup component add rustfmt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.toolchain }}
+          target: ${{ env.target }}
+          components: rust-src
+      - name: Install protobuf-compiler
+        run: |
+          sudo apt-get install protobuf-compiler
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.5
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Test and gather coverage
+        run: cargo llvm-cov --lcov --output-path lcov.info --all-features --workspace --exclude nodle-parachain
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4.5.0
+        with:
+          fail_ci_if_error: false
+          files: lcov.info
 
-    - name: Run cargo fmt
-      run: cargo fmt --all -- --check
+  try-runtime-prepare:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install protobuf-compiler
+        run: |
+          sudo apt-get install protobuf-compiler
+      - name: Install Rust stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.toolchain }}
+          components: rust-src
+          target: ${{ env.target }}
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.5
+      - name: Build runtime
+        run: cargo build --release --features=try-runtime -p runtime-eden
+      - name: Upload runtime artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: try_runtime
+          path: target/release/wbuild/runtime-eden/runtime_eden.wasm
+
+  try-runtime-paradis-execute:
+    runs-on: ubuntu-latest
+    needs: try-runtime-prepare
+    steps:
+      - name: Download runtime artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: try_runtime
+          path: try_runtime
+      - uses: robinraju/release-downloader@v1.11
+        with:
+          repository: "NodleCode/paradis-snapshot"
+          latest: true
+          fileName: "paradis-snapshot-full.bz2"
+          out-file-path: "snaps"
+          extract: false
+      - run: bunzip2 snaps/paradis-snapshot-full.bz2
+      - name: Run try-runtime paradis
+        uses: NodleCode/action-try-runtime/check@v0.6.1
+        with:
+          snap: snaps/paradis-snapshot-full
+          runtime: try_runtime/runtime_eden.wasm
+          checks: "all"
+          options: "--disable-idempotency-checks"
+
+  try-runtime-eden-execute:
+    runs-on: ubuntu-latest
+    needs: try-runtime-prepare
+    steps:
+      - name: Download runtime artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: try_runtime
+          path: try_runtime
+      - uses: robinraju/release-downloader@v1.11
+        with:
+          repository: "NodleCode/eden-snapshot"
+          latest: true
+          fileName: "eden-snapshot-full"
+          out-file-path: "snaps"
+          extract: false
+      - name: Run try-runtime
+        uses: NodleCode/action-try-runtime/check@v0.6.1
+        with:
+          snap: snaps/eden-snapshot-full
+          runtime: try_runtime/runtime_eden.wasm
+          checks: "all"
+          options: "--disable-idempotency-checks"
